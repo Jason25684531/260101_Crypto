@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker 數據目錄（不要打包進映像）
+data/
+logs/
+*.log
+
+# 環境變數
+.env
+.env.local
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Git
+.git/
+.gitignore
+
+# 測試覆蓋率
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

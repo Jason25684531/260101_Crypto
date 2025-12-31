@@ -1,0 +1,127 @@
+services:
+  # Python 應用服務
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: highfreq_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-5000}:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
+      - REDIS_URL=redis://cache:6379/0
+    volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./notebooks:/app/notebooks
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - highfreq_network
+    command: python -m flask run --host=0.0.0.0
+
+  # MySQL 8.0 資料庫
+  db:
+    image: mysql:8.0
+    container_name: highfreq_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Taipei
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    # 移除初始化腳本引用（先不需要）
+    #  - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    networks:
+      - highfreq_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis 快取服務（alpine 輕量版本）
+  cache:
+    image: redis:alpine
+    container_name: highfreq_cache
+    restart: unless-stopped
+    # 移除端口映射，僅供內部容器通信使用
+    # ports:
+    #   - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - highfreq_network
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Ngrok 公開隧道服務 (LineBot Webhook 用)
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: highfreq_ngrok
+    restart: unless-stopped
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTH_TOKEN}
+    ports:
+      - "4040:4040"  # Ngrok Web UI
+    networks:
+      - highfreq_network
+    command: http app:5000
+    depends_on:
+      app:
+        condition: service_started
+
+  # Streamlit Dashboard 服務 (Phase 1.5)
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: highfreq_dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"  # Streamlit 預設端口
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
+      - REDIS_URL=redis://cache:6379/0
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - highfreq_network
+    command: streamlit run app/dashboard/app.py --server.address=0.0.0.0 --server.port=8501
+
+networks:
+  highfreq_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:

@@ -1,0 +1,136 @@
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / Packaging
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.manifest
+*.spec
+
+# PyInstaller
+*.manifest
+*.spec
+
+# ==================== 敏感資料 ====================
+.env
+.env.local
+.env.production
+*.key
+*.pem
+*.p12
+
+# ==================== 數據與日誌 ====================
+data/
+logs/
+*.log
+*.sqlite
+*.db
+
+# ==================== IDE & Editors ====================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+
+# ==================== Jupyter ====================
+.ipynb_checkpoints/
+*.ipynb
+!notebooks/*.ipynb
+
+# ==================== Testing ====================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ==================== Docker ====================
+docker-compose.override.yml
+
+# ==================== OS ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ==================== 臨時文件 ====================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# ==================== 模型與大檔案 ====================
+*.h5
+*.pkl
+*.pickle
+*.joblib
+*.model
+*.pt
+*.pth
+*.onnx
+
+# ==================== Node (如果有前端) ====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==================== Migration 備份 ====================
+migrations/versions/*.pyc
+
+# ==================== 專案特定 ====================
+# 本地測試用的臨時腳本
+scripts/temp_*.py
+scripts/test_*.py
+
+# 開發環境變數
+.env.development
