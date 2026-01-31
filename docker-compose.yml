@@ -118,6 +118,35 @@ services:
       - highfreq_network
     command: streamlit run app/dashboard/app.py --server.address=0.0.0.0 --server.port=8501
 
+  # Trading Bot 服務 (Phase 3.9 - 自动化交易核心)
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: highfreq_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
+      - REDIS_URL=redis://cache:6379/0
+      - TRADING_MODE=${TRADING_MODE:-PAPER}
+      - PAPER_INITIAL_BALANCE=${PAPER_INITIAL_BALANCE:-10000.0}
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - highfreq_network
+    command: python bot.py
+
 networks:
   highfreq_network:
     driver: bridge

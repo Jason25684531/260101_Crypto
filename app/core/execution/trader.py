@@ -1,6 +1,10 @@
 """
 交易執行器 (TradeExecutor)
 負責實際的交易執行、止盈止損管理、安全檢查
+
+支持：
+- PAPER 模式：模拟交易（无风险）
+- LIVE 模式：实盘交易（真实资金）
 """
 import logging
 from typing import Dict, List, Optional
@@ -14,7 +18,7 @@ class TradeExecutor:
     交易執行器
     
     功能：
-    1. 執行買入/賣出訂單（通過 CCXT）
+    1. 執行買入/賣出訂單（通過 CCXT 或 PaperExchange）
     2. 計算止盈止損價格
     3. 監控持倉並自動執行止盈止損
     4. PanicScore 安全檢查（高風險時拒絕交易）
@@ -22,24 +26,30 @@ class TradeExecutor:
     
     def __init__(
         self,
-        exchange,
+        exchange=None,
         max_position_size: float = 0.3,
         stop_loss_percent: float = 0.05,
         take_profit_min: float = 0.10,
         take_profit_max: float = 0.20,
-        panic_threshold: float = 0.80
+        panic_threshold: float = 0.80,
+        trading_mode: Optional[str] = None
     ):
         """
         初始化交易執行器
         
         Args:
-            exchange: CCXT Exchange 實例
+            exchange: CCXT Exchange 實例（可选，如果未提供则根据 trading_mode 自动创建）
             max_position_size: 單一持倉最大資金比例（預設 30%）
             stop_loss_percent: 停損百分比（預設 5%）
             take_profit_min: 最低獲利目標（預設 10%）
             take_profit_max: 最高獲利目標（預設 20%）
             panic_threshold: PanicScore 警戒線（預設 0.80）
+            trading_mode: 交易模式 ('PAPER' 或 'LIVE'，默认从配置读取)
         """
+        # 自动创建交易所实例（如果未提供）
+        if exchange is None:
+            exchange = self._create_exchange(trading_mode)
+        
         self.exchange = exchange
         self.max_position_size = max_position_size
         self.stop_loss_percent = stop_loss_percent
@@ -47,10 +57,89 @@ class TradeExecutor:
         self.take_profit_max = take_profit_max
         self.panic_threshold = panic_threshold
         
+        # 检测交易模式
+        self.trading_mode = self._detect_trading_mode()
+        
         logger.info(
             f"TradeExecutor 初始化完成 - "
-            f"停損: {stop_loss_percent*100}%, "
+            f"模式: {self.trading_mode} | "
+            f"停損: {stop_loss_percent*100}% | "
             f"止盈: {take_profit_min*100}%-{take_profit_max*100}%"
+        )
+    
+    def _create_exchange(self, trading_mode: Optional[str] = None):
+        """
+        根据配置创建交易所实例
+        
+        Args:
+            trading_mode: 交易模式（可选）
+        
+        Returns:
+            交易所实例（PaperExchange 或 ccxt.Exchange）
+        """
+        from app.config import config
+        
+        # 确定交易模式
+        mode = (trading_mode or config.TRADING_MODE).upper()
+        
+        if mode == 'PAPER':
+            # 模拟交易模式
+            from app.core.execution.paper_exchange import PaperExchange
+            
+            exchange = PaperExchange(
+                initial_balance=config.PAPER_INITIAL_BALANCE
+            )
+            logger.info("🟢 使用模拟交易所（Paper Exchange）")
+        
+        elif mode == 'LIVE':
+            # 实盘交易模式
+            import ccxt
+            
+            if not config.BINANCE_API_KEY or not config.BINANCE_SECRET_KEY:
+                raise ValueError(
+                    "LIVE 模式需要配置 BINANCE_API_KEY 和 BINANCE_SECRET_KEY"
+                )
+            
+            exchange = ccxt.binance({
+                'apiKey': config.BINANCE_API_KEY,
+                'secret': config.BINANCE_SECRET_KEY,
+                'enableRateLimit': True,
+                'timeout': 30000,
+            })
+            logger.warning("🔴 使用实盘交易所（Binance Live）")
+        
+        else:
+            raise ValueError(f"未知的交易模式: {mode}")
+        
+        return exchange
+    
+    def _detect_trading_mode(self) -> str:
+        """检测当前交易模式"""
+        # 使用字符串检查避免导入 PaperExchange（避免触发 __init__.py）
+        exchange_class_name = self.exchange.__class__.__name__
+        
+        if exchange_class_name == 'PaperExchange':
+            return 'PAPER'
+        else:
+            return 'LIVE'
+    
+    @classmethod
+    def from_config(cls):
+        """
+        从配置文件创建 TradeExecutor
+        
+        Returns:
+            TradeExecutor 实例
+        """
+        from app.config import config
+        
+        return cls(
+            max_position_size=config.MAX_POSITION_SIZE,
+            stop_loss_percent=config.STOP_LOSS_PERCENT,
+            take_profit_min=config.TAKE_PROFIT_MIN,
+            take_profit_max=config.TAKE_PROFIT_MAX,
+            panic_threshold=config.PANIC_THRESHOLD,
+            trading_mode=config.TRADING_MODE
         )
     
     def place_order(
