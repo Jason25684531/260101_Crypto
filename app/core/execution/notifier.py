@@ -209,7 +209,6 @@ class TradingNotifier:
 
 # ==================== LINE Bot 指令處理器 ====================
 
-@line_handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     """處理用戶發送的文字訊息"""
     user_id = event.source.user_id
@@ -226,6 +225,11 @@ def handle_text_message(event):
             event.reply_token,
             TextSendMessage(text="您好！請使用以下指令：\n\n/status - 查看系統狀態\n/stop - 停止所有交易\n/panic - 緊急平倉")
         )
+
+
+# 註冊 LINE Bot 事件處理器（僅當 line_handler 已初始化時）
+if line_handler is not None:
+    line_handler.add(MessageEvent, message=TextMessage)(handle_text_message)
 
 
 def handle_command(user_id: str, command: str):
@@ -246,6 +250,10 @@ def handle_command(user_id: str, command: str):
         # 停止交易
         handle_stop_command(user_id)
     
+    elif command == '/start':
+        # 恢復交易
+        handle_start_command(user_id)
+    
     elif command == '/panic':
         # 緊急平倉
         handle_panic_command(user_id)
@@ -253,7 +261,7 @@ def handle_command(user_id: str, command: str):
     else:
         notifier.send_message(
             user_id,
-            f"未知指令: {command}\n\n可用指令：\n/status\n/stop\n/panic"
+            f"未知指令: {command}\n\n可用指令：\n/status\n/start\n/stop\n/panic"
         )
 
 
@@ -289,34 +297,105 @@ def handle_status_command(user_id: str):
 
 
 def handle_stop_command(user_id: str):
-    """處理 /stop 指令"""
-    # TODO: 實現停止交易邏輯（設置全局標誌）
-    message = """⏸️ 交易已停止
+    """處理 /stop 指令 - 停止所有交易"""
+    from app.extensions import redis_client
+    
+    try:
+        # 設置 Redis 鎖標誌
+        redis_client.set('SYSTEM_STATUS:TRADING_ENABLED', 'false')
+        
+        message = """⏸️ 交易已停止
 
 所有自動交易已暫停
 現有持倉將繼續監控止盈止損
 
 使用 /start 恢復交易
 """
+        
+        notifier = TradingNotifier()
+        notifier.send_message(user_id, message)
+        logger.warning(f"用戶 {user_id} 執行了 /stop 指令 - 交易已暫停")
     
-    notifier = TradingNotifier()
-    notifier.send_message(user_id, message)
-    logger.info(f"用戶 {user_id} 執行了 /stop 指令")
+    except Exception as e:
+        logger.error(f"執行 /stop 指令失敗: {e}")
+        notifier = TradingNotifier()
+        notifier.send_message(user_id, f"❌ 停止交易失敗: {e}")
+
+
+def handle_start_command(user_id: str):
+    """處理 /start 指令 - 恢復交易"""
+    from app.extensions import redis_client
+    
+    try:
+        # 解除 Redis 鎖標誌
+        redis_client.set('SYSTEM_STATUS:TRADING_ENABLED', 'true')
+        
+        message = """▶️ 交易已恢復
+
+系統已恢復自動交易
+將根據策略信號執行買賣操作
+
+使用 /stop 暫停交易
+"""
+        
+        notifier = TradingNotifier()
+        notifier.send_message(user_id, message)
+        logger.info(f"用戶 {user_id} 執行了 /start 指令 - 交易已恢復")
+    
+    except Exception as e:
+        logger.error(f"執行 /start 指令失敗: {e}")
+        notifier = TradingNotifier()
+        notifier.send_message(user_id, f"❌ 恢復交易失敗: {e}")
 
 
 def handle_panic_command(user_id: str):
     """處理 /panic 指令（緊急平倉）"""
-    # TODO: 實現緊急平倉邏輯
-    message = """🚨 緊急平倉指令已收到
+    from app.extensions import redis_client
+    from app.core.execution.trader import TradeExecutor
+    
+    try:
+        # 1. 設置 Redis 鎖（停止所有交易）
+        redis_client.set('SYSTEM_STATUS:TRADING_ENABLED', 'false')
+        logger.critical(f"🚨 用戶 {user_id} 執行了 /panic 指令 - 系統進入緊急狀態")
+        
+        # 2. 發送第一條警告訊息
+        notifier = TradingNotifier()
+        notifier.send_message(
+            user_id,
+            "🚨 緊急平倉指令已收到\n\n正在平掉所有持倉...\n⚠️ 此操作不可撤銷！"
+        )
+        
+        # 3. 執行平倉
+        executor = TradeExecutor.from_config()
+        closed_positions = executor.close_all_positions()
+        
+        # 4. 發送結果通知
+        if closed_positions:
+            positions_text = "\n".join([
+                f"- {pos['symbol']}: {pos['side']} {pos['amount']} @ {pos.get('price', 'MARKET')}"
+                for pos in closed_positions
+            ])
+            result_message = f"""✅ PANIC 執行完成
 
-系統將在 10 秒內平掉所有持倉
-請稍候...
+已平倉 {len(closed_positions)} 個持倉：
+{positions_text}
 
-⚠️ 此操作不可撤銷！
+🔒 系統已鎖定，使用 /start 恢復交易
+⏰ 時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
+        else:
+            result_message = """✅ PANIC 執行完成
+
+目前無持倉需要平倉
+🔒 系統已鎖定，使用 /start 恢復交易
+"""
+        
+        notifier.send_message(user_id, result_message)
     
-    notifier = TradingNotifier()
-    notifier.send_message(user_id, message)
-    logger.warning(f"用戶 {user_id} 執行了 /panic 指令")
-    
-    # TODO: 調用 TradeExecutor 平掉所有持倉
+    except Exception as e:
+        logger.error(f"執行 /panic 指令失敗: {e}", exc_info=True)
+        notifier = TradingNotifier()
+        notifier.send_message(
+            user_id,
+            f"❌ 緊急平倉失敗: {e}\n\n請手動檢查持倉並聯繫管理員！"
+        )

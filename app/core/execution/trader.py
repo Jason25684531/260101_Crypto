@@ -167,7 +167,28 @@ class TradeExecutor:
         
         Raises:
             ValueError: 當 PanicScore 過高時
+            RuntimeError: 當交易被鎖定時
         """
+        # 檢查交易鎖（Kill Switch）
+        from app.extensions import redis_client
+        
+        try:
+            trading_enabled = redis_client.get('SYSTEM_STATUS:TRADING_ENABLED')
+            # 預設為 'true'（向後相容）
+            if trading_enabled is None:
+                trading_enabled = 'true'
+            
+            if trading_enabled.lower() == 'false':
+                error_msg = "交易已暫停（Kill Switch 已啟動），拒絕所有訂單"
+                logger.warning(f"{error_msg} - {side.upper()} {amount} {symbol}")
+                raise RuntimeError(error_msg)
+        
+        except RuntimeError:
+            raise  # 重新拋出 RuntimeError
+        except Exception as e:
+            # Redis 連線失敗時記錄錯誤但允許交易繼續（容錯設計）
+            logger.error(f"檢查交易鎖失敗: {e}，允許交易繼續")
+        
         # 安全檢查：PanicScore 過高時拒絕買入
         if side == 'buy' and panic_score is not None:
             if panic_score > self.panic_threshold:
@@ -426,3 +447,180 @@ class TradeExecutor:
                 logger.error(f"監控 {symbol} 持倉時發生錯誤: {e}")
         
         return actions
+    
+    def execute_strategy(
+        self,
+        signals: List[Dict],
+        panic_score: Optional[float] = None,
+        use_ml_filter: bool = True,
+        ml_threshold: float = 0.6
+    ) -> List[Dict]:
+        """
+        執行策略信號
+        
+        Args:
+            signals: 策略信號列表，每個信號包含：
+                - symbol: 交易對
+                - action: 'buy' 或 'sell'
+                - price: 價格
+                - amount: 數量
+                - features: (可選) ML 特徵數據
+            panic_score: 恐慌指數（0-1）
+            use_ml_filter: 是否使用 ML 過濾器（預設啟用）
+            ml_threshold: ML 獲利機率閾值（預設 0.6）
+        
+        Returns:
+            執行結果列表
+        """
+        from app.extensions import redis_client
+        
+        # 檢查交易鎖
+        try:
+            trading_enabled = redis_client.get('SYSTEM_STATUS:TRADING_ENABLED')
+            if trading_enabled is None:
+                trading_enabled = 'true'
+            
+            if trading_enabled.lower() == 'false':
+                logger.warning("交易已暫停（Kill Switch），跳過策略執行")
+                return []
+        
+        except Exception as e:
+            logger.error(f"檢查交易鎖失敗: {e}，允許策略繼續")
+        
+        # 初始化 ML 預測器（如果啟用）
+        ml_predictor = None
+        if use_ml_filter:
+            try:
+                from app.core.ml.predictor import SignalPredictor
+                ml_predictor = SignalPredictor.get_instance()
+                if ml_predictor.is_enabled:
+                    ml_predictor.set_threshold(ml_threshold)
+                    logger.info(f"🤖 ML 過濾器已啟用 (閾值: {ml_threshold:.0%})")
+                else:
+                    logger.info("🤖 ML 模型未載入，跳過 ML 過濾")
+            except Exception as e:
+                logger.warning(f"初始化 ML 預測器失敗: {e}")
+        
+        results = []
+        filtered_count = 0
+        
+        for signal in signals:
+            try:
+                symbol = signal['symbol']
+                action = signal['action']
+                price = signal.get('price')
+                amount = signal['amount']
+                features = signal.get('features')  # ML 特徵
+                
+                # ML 過濾（僅對 BUY 信號）
+                if action.lower() == 'buy' and ml_predictor and ml_predictor.is_enabled:
+                    if features:
+                        prediction = ml_predictor.get_prediction_with_details(features)
+                        
+                        if not prediction['should_trade']:
+                            logger.info(
+                                f"🚫 ML 過濾信號 - {symbol} | "
+                                f"機率: {prediction['probability']:.2%} | "
+                                f"建議: {prediction['recommendation']}"
+                            )
+                            filtered_count += 1
+                            results.append({
+                                'status': 'filtered',
+                                'reason': 'ml_filter',
+                                'ml_probability': prediction['probability'],
+                                'ml_recommendation': prediction['recommendation'],
+                                'signal': signal
+                            })
+                            continue  # 跳過此信號
+                        else:
+                            logger.info(
+                                f"✅ ML 通過信號 - {symbol} | "
+                                f"機率: {prediction['probability']:.2%}"
+                            )
+                    else:
+                        logger.debug(f"信號缺少 features，跳過 ML 過濾: {symbol}")
+                
+                # 執行訂單
+                result = self.place_order(
+                    symbol=symbol,
+                    side=action,
+                    amount=amount,
+                    price=price,
+                    order_type='limit' if price else 'market',
+                    panic_score=panic_score
+                )
+                
+                results.append(result)
+                
+                logger.info(
+                    f"策略信號已執行 - {action.upper()} {amount} {symbol} @ {price or 'MARKET'}"
+                )
+            
+            except Exception as e:
+                logger.error(f"執行策略信號失敗: {e}")
+                results.append({
+                    'status': 'error',
+                    'error': str(e),
+                    'signal': signal
+                })
+        
+        # 統計 ML 過濾結果
+        if filtered_count > 0:
+            logger.info(f"🤖 ML 過濾統計: {filtered_count}/{len(signals)} 個信號被過濾")
+        
+        return results
+    
+    def close_all_positions(self) -> List[Dict]:
+        """
+        緊急平倉所有持倉（PANIC 模式）
+        
+        Returns:
+            平倉結果列表
+        """
+        logger.critical("🚨 執行緊急平倉（PANIC MODE）")
+        
+        positions = self.get_open_positions()
+        results = []
+        
+        if not positions:
+            logger.info("目前無持倉需要平倉")
+            return results
+        
+        for position in positions:
+            try:
+                symbol = position['symbol']
+                amount = position.get('contracts', 0)
+                
+                if amount <= 0:
+                    continue
+                
+                logger.warning(f"緊急平倉 - {symbol} {amount}")
+                
+                # 使用市價單立即平倉
+                result = self.place_order(
+                    symbol=symbol,
+                    side='sell',
+                    amount=amount,
+                    order_type='market'
+                )
+                
+                result['reason'] = 'panic'
+                results.append(result)
+                
+                if result['status'] == 'success':
+                    logger.info(f"✅ 平倉成功 - {symbol} {amount}")
+                else:
+                    logger.error(f"❌ 平倉失敗 - {symbol} {amount}")
+            
+            except Exception as e:
+                logger.error(f"緊急平倉 {symbol} 失敗: {e}", exc_info=True)
+                results.append({
+                    'status': 'error',
+                    'error': str(e),
+                    'symbol': symbol,
+                    'amount': amount
+                })
+        
+        logger.critical(f"緊急平倉完成 - 共處理 {len(results)} 個持倉")
+        
+        return results
