@@ -29,7 +29,13 @@ class ChainMetric(db.Model):
     # 指標數值
     value = db.Column(db.Float, nullable=False)
     
-    # 數據來源（glassnode, cryptoquant, santiment）
+    # Phase 6: 交易所淨流入量（Exchange Netflow）
+    exchange_netflow = db.Column(db.Float, nullable=True, comment='交易所淨流入量')
+    
+    # Phase 6: 巨鯨流入筆數（>10 BTC 的轉入筆數）
+    whale_inflow_count = db.Column(db.Integer, nullable=True, comment='巨鯨流入筆數(>10 BTC)')
+    
+    # 數據來源（glassnode, cryptoquant, santiment, dune）
     source = db.Column(db.String(20), nullable=False, default='glassnode')
     
     # 額外元數據（JSON 格式，儲存原始響應或計算細節）
@@ -59,6 +65,8 @@ class ChainMetric(db.Model):
             'metric_name': self.metric_name,
             'timestamp': self.timestamp,
             'value': self.value,
+            'exchange_netflow': self.exchange_netflow,
+            'whale_inflow_count': self.whale_inflow_count,
             'source': self.source,
             'extra_data': self.extra_data,
             'created_at': self.created_at.isoformat() if self.created_at else None

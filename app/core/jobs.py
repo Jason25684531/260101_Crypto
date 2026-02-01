@@ -224,3 +224,84 @@ def job_scan_signals_sync():
         asyncio.run(
             job_scan_signals(db_session=db.session)
         )
+
+
+async def job_update_onchain(
+    db_session=None,
+    asset: str = 'BTC'
+) -> None:
+    """
+    鏈上數據更新任務（Phase 6）
+    On-Chain Data Update Job
+    
+    功能：
+    1. 從 Dune Analytics 獲取最新的鏈上指標
+    2. 儲存到資料庫（ChainMetric 表）
+    3. 供策略引擎使用
+    
+    Args:
+        db_session: SQLAlchemy session
+        asset: 資產名稱（BTC, ETH 等）
+    
+    注意：
+    - Dune 數據更新較慢，建議每 4 小時運行一次
+    - 需要有效的 DUNE_API_KEY
+    """
+    from app.core.data.dune_fetcher import DuneFetcher
+    
+    start_time = datetime.now()
+    logger.info(f"🔗 開始更新鏈上數據: {asset}")
+    
+    try:
+        # 1. 初始化 Dune Fetcher
+        fetcher = DuneFetcher()
+        
+        if not fetcher.is_available():
+            logger.warning("⚠️  Dune API Key 未設置，跳過鏈上數據更新")
+            return
+        
+        # 2. 獲取最新指標
+        metrics = fetcher.fetch_latest_metrics(asset=asset)
+        
+        if not metrics:
+            logger.warning(f"⚠️  {asset} 未獲取到鏈上數據")
+            return
+        
+        # 3. 儲存到資料庫
+        if db_session is None:
+            logger.error("❌ db_session 為 None，無法儲存數據")
+            return
+        
+        success = fetcher.save_to_database(metrics, db_session)
+        
+        if success:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.info(
+                f"✅ On-Chain Data Updated: {asset} | "
+                f"Netflow: {metrics['exchange_netflow']:.2f}, "
+                f"Whale Count: {metrics['whale_inflow_count']} | "
+                f"耗時 {elapsed:.2f}s"
+            )
+        else:
+            logger.error(f"❌ 儲存鏈上數據失敗: {asset}")
+    
+    except Exception as e:
+        logger.error(f"❌ 鏈上數據更新失敗: {asset} - {e}", exc_info=True)
+        if db_session:
+            db_session.rollback()
+
+
+def job_update_onchain_sync():
+    """
+    同步包裝器 - 鏈上數據更新任務
+    Synchronous Wrapper for On-Chain Data Update
+    """
+    from app import create_app
+    from app.extensions import db
+    
+    app = create_app()
+    
+    with app.app_context():
+        asyncio.run(
+            job_update_onchain(db_session=db.session, asset='BTC')
+        )

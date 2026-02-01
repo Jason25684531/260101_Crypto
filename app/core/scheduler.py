@@ -163,6 +163,27 @@ class Scheduler:
         )
         logger.info("✅ Signal scan job scheduled (every minute at :10)")
 
+    def setup_onchain_jobs(self):
+        """
+        設置鏈上數據更新任務（Phase 6）
+        Setup On-Chain Data Update Jobs
+        
+        功能：每 4 小時執行一次鏈上數據更新
+        作用：從 Dune Analytics 獲取交易所淨流入、巨鯨活動等指標
+        
+        注意：Dune 數據更新較慢，不需要高頻更新
+        """
+        from app.core.jobs import job_update_onchain_sync
+        
+        self.add_job(
+            func=job_update_onchain_sync,
+            trigger='interval',
+            hours=4,  # 每 4 小時執行一次
+            id='job_update_onchain',
+            replace_existing=True
+        )
+        logger.info("✅ On-Chain data update job scheduled (every 4 hours)")
+
     def setup_all_jobs(self):
         """
         一键设置所有定时任务
@@ -171,11 +192,14 @@ class Scheduler:
         包含：
         1. 市场数据更新（每分钟 :05）
         2. 策略信号扫描（每分钟 :10）
+        3. 鏈上數據更新（每 4 小時）- Phase 6
         """
         logger.info("🔧 Setting up all scheduled jobs...")
         
         self.setup_market_data_jobs()
         self.setup_signal_scan_jobs()
+        self.setup_onchain_jobs()
         
         logger.info("✅ All jobs setup complete")
         self.print_jobs()
+

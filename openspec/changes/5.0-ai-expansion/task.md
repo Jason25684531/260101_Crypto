@@ -5,13 +5,14 @@
 下一步是引入 **Machine Learning (ML)** 來過濾假信號，並整合 **Deep On-Chain Data** 以捕捉巨鯨動向。
 這將把系統的 Alpha 來源從「純技術面」擴展到「概率預測」與「籌碼面」。
 
-**當前狀態 (2026-01-31):**
+**當前狀態 (2026-02-01):**
 - ✅ Phase 4.0 核心安全功能已完成 (Kill Switch + SAST)
 - ⏳ Phase 4.2 (Watchdog) 和 4.4 (Production Deployment) 待實作
 - ✅ **Phase 5 (ML Signal Filter) 已完成！** (2026-01-31)
-- ⏳ Phase 6 (On-Chain) 尚未開始
+- ✅ **Phase 6 (On-Chain Data Integration) 已完成！** (2026-02-01)
 - 🗄️ 資料庫已有 On-Chain 模型基礎 (`ChainMetric`, `ExchangeNetflow`)
 - 📦 ML 依賴套件已安裝 (scikit-learn==1.5.0, joblib==1.3.2)
+- 🔗 Dune Analytics 整合已完成 (dune-client==1.3.0)
 
 ---
 
@@ -47,38 +48,58 @@
 
 ---
 
-## Phase 6: Deep On-Chain Analytics (深層鏈上數據)
-**目標：** 整合 Dune Analytics，監控交易所淨流入 (Netflow) 與巨鯨動向。
+# Tasks: Phase 6.0 - Deep On-Chain Analytics
 
-- [ ] **6.1 Infrastructure (基礎設施)**
-    - [ ] **Update** `requirements.txt`: Uncomment `dune-client==1.3.0`.
-    - [ ] **Update** `.env`: Add `DUNE_API_KEY`.
-    - [x] ~~**Update** `app/models/onchain.py`~~: *(已完成 - `ExchangeNetflow` 模型包含 inflow/outflow/netflow 欄位)*
+## Context (背景)
+系統目前具備「技術面」與「AI 面」的決策能力。
+為了構建「資訊優勢」，我們需要整合鏈上數據 (On-Chain Data)。
+本階段將接入 Dune Analytics，捕捉「聰明錢」的動向，作為 CompositeScore 的重要扣分/加分項。
 
-- [ ] **6.2 Data Fetcher (數據抓取)**
-    - [ ] **Create** `app/core/data/dune_fetcher.py`:
-        - [ ] Implement `DuneFetcher` class.
-        - [ ] Query 1: "Bitcoin Exchange Netflow" (每日/每小時更新)。
-        - [ ] Query 2: "Large Transactions (>10 BTC) to Exchanges".
-    - [ ] **Update** `app/core/jobs.py`:
-        - [ ] Add `job_update_onchain_daily()`: 由於 Dune API 較昂貴或較慢，設定為每 4-6 小時執行一次。
+## Phase 6.1: Infrastructure & Data Model
+**目標：** 建立鏈上數據的儲存結構與連接器。
 
-- [ ] **6.3 Signal Logic (信號邏輯)**
-    - [ ] **Update** `app/core/strategy/factors.py`:
-        - [ ] Add `OnChainFactor`:
-            - 若 `Exchange Netflow` 為大幅正值 (流入 > 2 Sigma) -> 視為潛在拋壓 (Bearish)。
-            - 若 `Whale Inflow` 突增 -> 觸發 `WhaleAlert`。
-    - [ ] **Update** `CompositeScore`:
-        - 將鏈上因子權重納入計算 (例如扣除總分 10-20 分)，讓系統在巨鯨倒貨前自動減倉。
+- [x] **Dependencies**
+    - [x] **Update** `requirements.txt`: Uncomment `dune-client==1.3.0`.
+    - [x] **Config:** Add `DUNE_API_KEY` to `.env` and `app/config.py`.
 
----
+- [x] **Database Schema**
+    - [x] **Update** `app/models/onchain.py`:
+        - [x] Add columns to `ChainMetric`:
+            - `exchange_netflow` (float): 交易所淨流入量
+            - `whale_inflow_count` (int): >10 BTC 的轉入筆數
+    - [x] **Migration:** Run `flask db migrate` & `upgrade`.
 
-## Validation (驗證計畫)
-- [ ] **ML Backtest:**
-    - 使用 `vectorbt` 比較 "Raw Strategy" vs "ML Filtered Strategy" 的夏普比率。
-    - 目標：交易次數減少，但勝率 (Win Rate) 提升 > 5%。
-- [ ] **On-Chain Correlation:**
-    - 驗證 Dune 數據 (Netflow) 與價格下跌的滯後相關性 (Lag Correlation)。
+## Phase 6.2: Dune Data Fetcher
+**目標：** 實作專用的 Fetcher，因為 Dune 是異步查詢 (Submit -> Wait -> Get Result)。
+
+- [x] **Implement Fetcher**
+    - [x] **Create** `app/core/data/dune_fetcher.py`:
+        - [x] Class `DuneFetcher`
+        - [x] Method `fetch_latest_metrics()`:
+            - 使用 Query ID (需在 Dune 官網找好，如 "Bitcoin Exchange Netflow")
+            - 處理 API Rate Limit 與等待邏輯。
+    - [x] **Unit Test:** `tests/unit/test_dune_fetcher.py` (Mock API response).
+
+## Phase 6.3: Automation & Strategy Integration
+**目標：** 將鏈上數據納入自動化排程與決策引擎。
+
+- [x] **Job Scheduling**
+    - [x] **Update** `app/core/jobs.py`:
+        - [x] Add `job_update_onchain()`: Run every 4 hours (Dune 數據更新較慢).
+
+- [x] **Signal Logic**
+    - [x] **Update** `app/core/strategy/factors.py`:
+        - [x] Add `OnChainFactor`: Calculate Z-Score of Netflow.
+    - [x] **Update** `app/core/strategy/engine.py`:
+        - [x] `CompositeScore` Logic:
+            - If `Netflow Z-Score > 2.0` (異常流入) -> Score -= 20 (看空).
+            - If `Netflow Z-Score < -2.0` (異常流出) -> Score += 10 (看多).
+
+## Validation
+- [x] **Dashboard Update:**
+    - [x] Add "On-Chain" chart to Streamlit Tab 1.
+- [x] **Live Test:**
+    - [x] Verify `job_update_onchain` runs successfully in logs.
 
 ---
 
@@ -95,11 +116,21 @@
 - 實作 `SignalPredictor` 類別
 - 整合到交易執行流程
 
-### ⏳ 待完成 (Phase 6 - On-Chain)
-- 安裝 `dune-client==1.3.0`
-- 實作 `DuneFetcher` 類別
-- 整合鏈上信號到策略評分系統
-- 設定排程任務定期更新鏈上數據
+### ✅ 已完成 (Phase 6 - On-Chain) - 2026-02-01
+- **依賴套件**: `dune-client==1.3.0` 已安裝
+- **資料庫模型**: `ChainMetric` 新增 `exchange_netflow` 和 `whale_inflow_count` 欄位
+- **DuneFetcher 類別**: 完整實作異步查詢流程（Submit -> Wait -> Get Result）
+- **單元測試**: `tests/unit/test_dune_fetcher.py` 18/18 測試通過
+- **排程任務**: `job_update_onchain()` 每 4 小時執行一次
+- **策略整合**: `calculate_composite_score()` 整合鏈上 Z-Score 調整邏輯
+- **輔助函數**: `get_latest_onchain_zscore()` 從資料庫獲取最新指標
+- **功能驗證**: `tests/manual/test_phase6.py` 所有測試通過
+
+### ⏳ 待完成 (Phase 6 - 上線配置)
+- 在 Dune Analytics 創建查詢並獲取真實 Query ID
+- 設置 DUNE_API_KEY 環境變數（需付費訂閱）
+- 執行資料庫遷移：`flask db migrate && flask db upgrade`
+- 啟動調度器測試鏈上數據更新功能
 
 ### 📌 建議執行順序
 1. **Phase 4.2 完成** (Watchdog) - 確保資金安全

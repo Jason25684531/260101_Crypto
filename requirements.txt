@@ -40,8 +40,8 @@ joblib==1.3.2  # For model serialization
 # backtrader==1.9.78.123
 # matplotlib==3.8.2
 
-# ==================== On-Chain Data (Phase 4 - 可選) ====================
-# dune-client==1.3.0
+# ==================== On-Chain Data (Phase 6) ====================
+dune-client==1.3.0
 # web3==7.8.0
 # eth-typing==5.1.0
 

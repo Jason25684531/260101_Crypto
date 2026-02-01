@@ -1,10 +1,15 @@
 """
 Alpha Factors - 技術指標計算模組
 實現 RSI、布林通道、移動平均等技術分析指標
+
+Phase 6: 新增鏈上數據整合功能
 """
 import pandas as pd
 import numpy as np
 from typing import Tuple, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AlphaFactors:
@@ -256,15 +261,22 @@ class AlphaFactors:
     def calculate_composite_score(
         self,
         df: pd.DataFrame,
-        weights: Optional[dict] = None
+        weights: Optional[dict] = None,
+        onchain_zscore: Optional[float] = None
     ) -> pd.Series:
-        """計算綜合評分（組合多個技術指標）
+        """計算綜合評分（組合多個技術指標 + 鏈上數據）
         
-        綜合考慮 RSI、趨勢、波動率等因素，產生 0-100 的評分
+        綜合考慮 RSI、趨勢、波動率、成交量及鏈上指標，產生 0-100 的評分
+        
+        Phase 6 更新：
+        - 新增鏈上數據整合（Exchange Netflow Z-Score）
+        - 異常流入（Z > 2.0）-> 扣分（看空信號）
+        - 異常流出（Z < -2.0）-> 加分（看多信號）
         
         Args:
             df: OHLCV DataFrame
             weights: 各指標權重字典（可選）
+            onchain_zscore: 鏈上指標 Z-Score（交易所淨流入）
         
         Returns:
             綜合評分序列（0-100）
@@ -307,4 +319,73 @@ class AlphaFactors:
         # 確保在 0-100 範圍內
         composite = np.clip(composite, 0, 100)
         
+        # === Phase 6: 鏈上數據調整 ===
+        if onchain_zscore is not None:
+            if onchain_zscore > 2.0:
+                # 異常流入（大量幣流入交易所）-> 拋壓增加 -> 看空
+                adjustment = -20
+                composite = composite + adjustment
+                composite = np.clip(composite, 0, 100)
+            elif onchain_zscore < -2.0:
+                # 異常流出（大量幣流出交易所）-> 囤幣行為 -> 看多
+                adjustment = 10
+                composite = composite + adjustment
+                composite = np.clip(composite, 0, 100)
+        
         return composite
+
+
+def get_latest_onchain_zscore(db_session, asset: str = 'BTC', window: int = 30) -> Optional[float]:
+    """
+    從資料庫獲取最新的鏈上指標 Z-Score
+    
+    Phase 6: 輔助函數，用於策略引擎整合
+    
+    Args:
+        db_session: SQLAlchemy session
+        asset: 資產名稱（BTC, ETH 等）
+        window: Z-Score 計算窗口
+    
+    Returns:
+        最新的 Exchange Netflow Z-Score，若無數據則返回 None
+    """
+    from app.models.onchain import ChainMetric
+    
+    try:
+        # 獲取最近 window 筆數據
+        metrics = db_session.query(ChainMetric).filter_by(
+            asset=asset,
+            metric_name='dune_composite',
+            source='dune'
+        ).order_by(ChainMetric.timestamp.desc()).limit(window).all()
+        
+        if len(metrics) < 2:
+            logger.warning(f"鏈上數據不足（需要至少 2 筆），目前只有 {len(metrics)} 筆")
+            return None
+        
+        # 提取 netflow 數據
+        netflows = [m.exchange_netflow for m in reversed(metrics) if m.exchange_netflow is not None]
+        
+        if len(netflows) < 2:
+            logger.warning(f"有效 netflow 數據不足")
+            return None
+        
+        # 計算 Z-Score
+        netflow_series = pd.Series(netflows)
+        mean = netflow_series.mean()
+        std = netflow_series.std()
+        
+        if std == 0:
+            logger.warning("標準差為 0，無法計算 Z-Score")
+            return None
+        
+        latest_netflow = netflows[-1]
+        z_score = (latest_netflow - mean) / std
+        
+        logger.info(f"鏈上 Z-Score: {z_score:.2f} (Netflow: {latest_netflow:.2f})")
+        
+        return float(z_score)
+    
+    except Exception as e:
+        logger.error(f"獲取鏈上 Z-Score 失敗: {e}", exc_info=True)
+        return None

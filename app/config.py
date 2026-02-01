@@ -49,6 +49,9 @@ class Config:
     MAX_POSITION_SIZE = float(os.getenv('MAX_POSITION_SIZE', 0.3))
     KELLY_FRACTION = float(os.getenv('KELLY_FRACTION', 0.25))
     
+    # ==================== On-Chain Data (Phase 6) ====================
+    DUNE_API_KEY = os.getenv('DUNE_API_KEY', '')
+    
     TAKE_PROFIT_MIN = float(os.getenv('TAKE_PROFIT_MIN', 0.10))
     TAKE_PROFIT_MAX = float(os.getenv('TAKE_PROFIT_MAX', 0.20))
     STOP_LOSS_PERCENT = float(os.getenv('STOP_LOSS_PERCENT', 0.05))
